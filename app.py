@@ -28,97 +28,6 @@ def is_task_scheduled_for(task, target_date):
         return True
     return target_date.weekday() in recurrence
 
-def build_calendar_html(year, month, today, selected_date, completions, tasks):
-    task_map = {t["id"]: t["name"] for t in tasks}
-    cal = calendar.monthcalendar(year, month)
-    day_colors = ["#f0f0f0"] * 5 + ["#3498db", "#e74c3c"]
-
-    header_cells = ""
-    for label, color in zip(WEEKDAYS, day_colors):
-        header_cells += (
-            f'<th style="color:{color};font-size:16px;font-weight:bold;'
-            f'text-align:center;padding:8px 2px;border-bottom:1px solid #333;">'
-            f'{label}</th>'
-        )
-
-    rows_html = ""
-    for week in cal:
-        row = "<tr>"
-        for i, day in enumerate(week):
-            if day == 0:
-                row += '<td style="padding:4px;"></td>'
-                continue
-
-            day_str = f"{year}-{month:02d}-{day:02d}"
-            cell_date = date(year, month, day)
-            is_today = cell_date == today
-            is_selected = cell_date == selected_date
-
-            done_ids = completions.get(day_str, [])
-            done_names = [task_map[tid] for tid in done_ids if tid in task_map]
-            scheduled_names = [
-                t["name"] for t in tasks
-                if t.get("recurrence")
-                and is_task_scheduled_for(t, cell_date)
-                and t["id"] not in done_ids
-            ]
-
-            color = day_colors[i]
-
-            if is_selected and is_today:
-                cell_bg = "background:#3a3a10;border:2px solid #7c3aed;border-radius:8px;"
-            elif is_selected:
-                cell_bg = "background:#1e1a2e;border:2px solid #7c3aed;border-radius:8px;"
-            elif is_today:
-                cell_bg = "background:#2a2a1a;border-radius:8px;"
-            else:
-                cell_bg = "border-radius:8px;"
-
-            day_fw = "bold" if (is_today or is_selected) else "normal"
-
-            badge = ""
-            if done_names:
-                badge = (
-                    f'<span style="background:#2ecc71;color:#000;border-radius:8px;'
-                    f'padding:0 5px;font-size:11px;font-weight:bold;margin-left:2px">'
-                    f'{len(done_names)}</span>'
-                )
-
-            tasks_html = ""
-            for name in done_names[:2]:
-                tasks_html += (
-                    f'<div style="font-size:11px;color:#2ecc71;overflow:hidden;'
-                    f'text-overflow:ellipsis;white-space:nowrap;line-height:1.4">'
-                    f'✓{name}</div>'
-                )
-            for name in scheduled_names[:2]:
-                tasks_html += (
-                    f'<div style="font-size:11px;color:#e74c3c;overflow:hidden;'
-                    f'text-overflow:ellipsis;white-space:nowrap;line-height:1.4">'
-                    f'○{name}</div>'
-                )
-
-            # target="_self" で新規タブを防止、replace() でブラウザ履歴を増やさない
-            row += (
-                f'<td style="padding:3px 2px;vertical-align:top;min-width:0;">'
-                f'<a href="?date={day_str}" target="_self"'
-                f' onclick="event.preventDefault();window.location.replace(\'?date={day_str}\')"'
-                f' style="text-decoration:none;display:block;cursor:pointer;">'
-                f'<div style="{cell_bg}padding:4px;">'
-                f'<span style="color:{color};font-size:18px;font-weight:{day_fw}">{day}</span>{badge}'
-                f'{tasks_html}'
-                f'</div></a></td>'
-            )
-        row += "</tr>"
-        rows_html += row
-
-    return (
-        f'<table style="width:100%;border-collapse:collapse;table-layout:fixed;">'
-        f'<thead><tr>{header_cells}</tr></thead>'
-        f'<tbody>{rows_html}</tbody>'
-        f'</table>'
-    )
-
 # ── ページ設定 ──────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="タスク管理", page_icon="✅", layout="wide")
@@ -138,11 +47,37 @@ st.markdown("""
 .stTextInput input { font-size: 16px !important; }
 .stMultiSelect div[data-baseweb] { font-size: 15px !important; }
 
+/* ─ カレンダー: モバイルでも7列を維持 ─ */
+[data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    gap: 3px !important;
+}
+[data-testid="stHorizontalBlock"] > div {
+    min-width: 0 !important;
+    flex: 1 1 0% !important;
+    overflow: hidden !important;
+}
+[data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
+    min-width: 0 !important;
+    padding: 4px 2px !important;
+    border-radius: 6px !important;
+    line-height: 1.3 !important;
+    word-break: break-word !important;
+}
+
 @media (max-width: 768px) {
-    .stButton > button { min-height: 56px; font-size: 17px; }
+    [data-testid="stHorizontalBlock"] {
+        gap: 2px !important;
+    }
+    [data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
+        font-size: 11px !important;
+        min-height: 44px !important;
+        padding: 2px 1px !important;
+    }
     h1 { font-size: 1.4rem !important; }
     h3 { font-size: 1.1rem !important; }
     .stCheckbox label { font-size: 18px !important; }
+    .stButton > button { min-height: 56px; font-size: 17px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -163,20 +98,6 @@ if "cal_month" not in st.session_state:
     st.session_state.cal_month = date.today().month
 if "view" not in st.session_state:
     st.session_state["view"] = "✅ タスク一覧"
-
-# カレンダー日付タップ時（?date=YYYY-MM-DD）
-raw_date = st.query_params.get("date", "")
-if raw_date:
-    try:
-        sel = date.fromisoformat(raw_date)
-        st.session_state.cal_selected = sel
-        st.session_state.cal_year = sel.year
-        st.session_state.cal_month = sel.month
-        st.session_state["view"] = "📅 カレンダー"
-        st.query_params.clear()
-        st.rerun()
-    except Exception:
-        pass
 
 # ── サイドバー ──────────────────────────────────────────────────────────────────
 
@@ -238,7 +159,7 @@ with st.sidebar:
 
 NAV_OPTIONS = ["✅ タスク一覧", "📅 カレンダー"]
 view = st.radio(
-    "ナビゲーション",
+    "nav",
     NAV_OPTIONS,
     horizontal=True,
     key="view",
@@ -325,14 +246,12 @@ if view == "✅ タスク一覧":
         if today_tasks:
             incomplete = [t for t in today_tasks if t["id"] not in today_done]
             complete   = [t for t in today_tasks if t["id"] in today_done]
-
             if incomplete:
                 st.markdown("#### 🔴 未達成")
                 for cat in sorted(set(t["category"] for t in incomplete)):
                     st.markdown(f"**📁 {cat}**")
                     for task in [t for t in incomplete if t["category"] == cat]:
                         render_task_row(task)
-
             if complete:
                 st.markdown("#### 🟢 達成")
                 for cat in sorted(set(t["category"] for t in complete)):
@@ -359,7 +278,9 @@ if view == "✅ タスク一覧":
 else:
     today = date.today()
     task_map = {t["id"]: t["name"] for t in tasks}
+    day_colors = ["#f0f0f0"] * 5 + ["#3498db", "#e74c3c"]
 
+    # 月ナビゲーション
     col_prev, col_month, col_next = st.columns([1, 4, 1])
     with col_prev:
         if st.button("◀", use_container_width=True, key="cal_prev"):
@@ -384,16 +305,64 @@ else:
                 st.session_state.cal_month += 1
             st.rerun()
 
-    cal_html = build_calendar_html(
-        st.session_state.cal_year,
-        st.session_state.cal_month,
-        today,
-        st.session_state.cal_selected,
-        completions,
-        tasks,
-    )
-    st.markdown(cal_html, unsafe_allow_html=True)
+    year  = st.session_state.cal_year
+    month = st.session_state.cal_month
+    cal_grid = calendar.monthcalendar(year, month)
 
+    # 曜日ヘッダー（HTML: 色付き）
+    header_html = (
+        '<table style="width:100%;table-layout:fixed;border-collapse:collapse;margin-bottom:2px;">'
+        '<tr>'
+    )
+    for label, color in zip(WEEKDAYS, day_colors):
+        header_html += (
+            f'<th style="color:{color};font-weight:bold;font-size:15px;'
+            f'text-align:center;padding:6px 0;border-bottom:1px solid #444;">'
+            f'{label}</th>'
+        )
+    header_html += '</tr></table>'
+    st.markdown(header_html, unsafe_allow_html=True)
+
+    # 日付グリッド（Streamlit ボタン: リロードなし）
+    for week in cal_grid:
+        cols = st.columns(7)
+        for col, day in zip(cols, week):
+            with col:
+                if day == 0:
+                    st.write("")
+                    continue
+
+                cell_date = date(year, month, day)
+                day_str   = str(cell_date)
+                is_today    = cell_date == today
+                is_selected = cell_date == st.session_state.cal_selected
+
+                done_ids    = set(completions.get(day_str, []))
+                done_count  = len([tid for tid in done_ids if tid in task_map])
+                sched_undone = len([
+                    t for t in tasks
+                    if t.get("recurrence")
+                    and is_task_scheduled_for(t, cell_date)
+                    and t["id"] not in done_ids
+                ])
+
+                # ラベル
+                num = f"**{day}**" if is_today else str(day)
+                badges = []
+                if done_count:   badges.append(f"✅{done_count}")
+                if sched_undone: badges.append(f"🔴{sched_undone}")
+                label = num + ("\n" + " ".join(badges) if badges else "")
+
+                if st.button(
+                    label,
+                    key=f"d_{year}_{month}_{day}",
+                    use_container_width=True,
+                    type="primary" if is_selected else "secondary",
+                ):
+                    st.session_state.cal_selected = cell_date
+                    st.rerun()
+
+    # 選択日の詳細
     st.divider()
     selected_date  = st.session_state.cal_selected
     sel_str        = str(selected_date)
