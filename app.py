@@ -95,7 +95,7 @@ def build_calendar_html(year, month, today, selected_date, completions, tasks):
                 )
             for name in scheduled_names[:2]:
                 tasks_html += (
-                    f'<div style="font-size:11px;color:#777;overflow:hidden;'
+                    f'<div style="font-size:11px;color:#e74c3c;overflow:hidden;'
                     f'text-overflow:ellipsis;white-space:nowrap;line-height:1.4">'
                     f'○{name}</div>'
                 )
@@ -229,10 +229,10 @@ with tab_tasks:
             is_done = task["id"] in today_done
             rec = recurrence_label(task.get("recurrence", []))
 
-            # 未完了=赤、完了=緑のラベル
+            # 未完了=赤、完了=緑のラベル（斜線なし）
             if is_done:
                 color, icon = "#2ecc71", "✅"
-                style = "color:#2ecc71;text-decoration:line-through;font-size:17px"
+                style = "color:#2ecc71;font-size:17px"
             else:
                 color, icon = "#e74c3c", "○"
                 style = "color:#e74c3c;font-size:17px"
@@ -273,10 +273,22 @@ with tab_tasks:
 
         st.subheader(f"📅 今日のタスク（{WEEKDAYS[today.weekday()]}曜日）")
         if today_tasks:
-            for cat in sorted(set(t["category"] for t in today_tasks)):
-                st.markdown(f"**📁 {cat}**")
-                for task in [t for t in today_tasks if t["category"] == cat]:
-                    render_task_row(task)
+            incomplete = [t for t in today_tasks if t["id"] not in today_done]
+            complete   = [t for t in today_tasks if t["id"] in today_done]
+
+            if incomplete:
+                st.markdown("#### 🔴 未達成")
+                for cat in sorted(set(t["category"] for t in incomplete)):
+                    st.markdown(f"**📁 {cat}**")
+                    for task in [t for t in incomplete if t["category"] == cat]:
+                        render_task_row(task)
+
+            if complete:
+                st.markdown("#### 🟢 達成")
+                for cat in sorted(set(t["category"] for t in complete)):
+                    st.markdown(f"**📁 {cat}**")
+                    for task in [t for t in complete if t["category"] == cat]:
+                        render_task_row(task)
         else:
             st.caption("今日のタスクはありません")
 
@@ -359,13 +371,13 @@ with tab_calendar:
     wd = WEEKDAYS[selected_date.weekday()]
     st.subheader(f"📋 {selected_date.month}月{selected_date.day}日（{wd}）の詳細")
 
-    if sel_done_names:
-        st.markdown("**✅ 完了したタスク**")
-        for name in sel_done_names:
-            st.markdown(f"- {name}")
     if sel_scheduled:
-        st.markdown("**📌 予定（未完了）**")
+        st.markdown("**🔴 未達成**")
         for name in sel_scheduled:
-            st.markdown(f"- {name}")
+            st.markdown(f'<div style="color:#e74c3c;font-size:16px">○ {name}</div>', unsafe_allow_html=True)
+    if sel_done_names:
+        st.markdown("**🟢 達成**")
+        for name in sel_done_names:
+            st.markdown(f'<div style="color:#2ecc71;font-size:16px">✅ {name}</div>', unsafe_allow_html=True)
     if not sel_done_names and not sel_scheduled:
         st.caption("この日のタスクはありません。")
