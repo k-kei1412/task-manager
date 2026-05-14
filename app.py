@@ -28,15 +28,92 @@ def is_task_scheduled_for(task, target_date):
         return True
     return target_date.weekday() in recurrence
 
+def build_calendar_html(year, month, today, completions, tasks):
+    task_map = {t["id"]: t["name"] for t in tasks}
+    cal = calendar.monthcalendar(year, month)
+    day_colors = ["#f0f0f0"] * 5 + ["#3498db", "#e74c3c"]
+
+    # 曜日ヘッダー行
+    header_cells = ""
+    for i, (label, color) in enumerate(zip(WEEKDAYS, day_colors)):
+        header_cells += (
+            f'<th style="color:{color};font-size:16px;font-weight:bold;'
+            f'text-align:center;padding:8px 2px;border-bottom:1px solid #333;">'
+            f'{label}</th>'
+        )
+
+    # 日付行
+    rows_html = ""
+    for week in cal:
+        row = "<tr>"
+        for i, day in enumerate(week):
+            if day == 0:
+                row += '<td style="padding:4px;"></td>'
+                continue
+
+            day_str = f"{year}-{month:02d}-{day:02d}"
+            cell_date = date(year, month, day)
+            is_today = cell_date == today
+
+            done_ids = completions.get(day_str, [])
+            done_names = [task_map[tid] for tid in done_ids if tid in task_map]
+            scheduled_names = [
+                t["name"] for t in tasks
+                if t.get("recurrence")
+                and is_task_scheduled_for(t, cell_date)
+                and t["id"] not in done_ids
+            ]
+
+            color = day_colors[i]
+            cell_bg = "background:#2a2a1a;border-radius:8px;" if is_today else ""
+            day_fw = "bold" if is_today else "normal"
+
+            badge = ""
+            if done_names:
+                badge = (
+                    f'<span style="background:#2ecc71;color:#000;border-radius:8px;'
+                    f'padding:0 5px;font-size:11px;font-weight:bold;margin-left:2px">'
+                    f'{len(done_names)}</span>'
+                )
+
+            tasks_html = ""
+            for name in done_names[:3]:
+                tasks_html += (
+                    f'<div style="font-size:11px;color:#2ecc71;overflow:hidden;'
+                    f'text-overflow:ellipsis;white-space:nowrap;line-height:1.4">'
+                    f'✓{name}</div>'
+                )
+            for name in scheduled_names[:3]:
+                tasks_html += (
+                    f'<div style="font-size:11px;color:#777;overflow:hidden;'
+                    f'text-overflow:ellipsis;white-space:nowrap;line-height:1.4">'
+                    f'○{name}</div>'
+                )
+
+            row += (
+                f'<td style="padding:4px 2px;vertical-align:top;min-width:0">'
+                f'<div style="{cell_bg}padding:4px;">'
+                f'<span style="color:{color};font-size:18px;font-weight:{day_fw}">{day}</span>{badge}'
+                f'{tasks_html}'
+                f'</div></td>'
+            )
+        row += "</tr>"
+        rows_html += row
+
+    return (
+        f'<table style="width:100%;border-collapse:collapse;table-layout:fixed;">'
+        f'<thead><tr>{header_cells}</tr></thead>'
+        f'<tbody>{rows_html}</tbody>'
+        f'</table>'
+    )
+
 # ── ページ設定 ──────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="タスク管理", page_icon="✅", layout="wide")
 
 st.markdown("""
 <style>
-/* ── モバイル・全体 ── */
 .stApp { font-size: 16px; }
-
 .stButton > button {
     min-height: 48px;
     font-size: 16px;
@@ -46,43 +123,14 @@ st.markdown("""
     font-size: 17px !important;
     line-height: 1.6 !important;
 }
-.stTextInput input, .stSelectbox select {
-    font-size: 16px !important;
-}
-.stMultiSelect label, .stMultiSelect div {
-    font-size: 15px !important;
-}
+.stTextInput input { font-size: 16px !important; }
+.stMultiSelect div[data-baseweb] { font-size: 15px !important; }
 
-/* ── カレンダーセル ── */
-.cal-day {
-    font-size: 20px;
-    font-weight: bold;
-    line-height: 1.8;
-}
-.cal-done {
-    font-size: 13px;
-    color: #2ecc71;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.cal-sched {
-    font-size: 13px;
-    color: #666;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* ── スマホ用追加調整 ── */
 @media (max-width: 768px) {
     .stButton > button { min-height: 56px; font-size: 17px; }
-    h1 { font-size: 1.5rem !important; }
-    h2 { font-size: 1.3rem !important; }
-    h3 { font-size: 1.2rem !important; }
+    h1 { font-size: 1.4rem !important; }
+    h3 { font-size: 1.1rem !important; }
     .stCheckbox label { font-size: 18px !important; }
-    .cal-day { font-size: 17px; }
-    .cal-done, .cal-sched { font-size: 11px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -93,8 +141,7 @@ data = load_data()
 tasks = data["tasks"]
 completions = data["completions"]
 
-# ── サイドバー：タスク追加 ──────────────────────────────────────────────────────
-# ※ toggle は form の外に置かないと再描画されないため、フォームを使わない設計
+# ── サイドバー ──────────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.header("➕ タスクを追加")
@@ -104,11 +151,7 @@ with st.sidebar:
     use_recurrence = st.toggle("毎週繰り返す", key="inp_recur")
 
     if use_recurrence:
-        selected_labels = st.multiselect(
-            "繰り返す曜日を選択",
-            options=WEEKDAYS,
-            key="inp_days",
-        )
+        selected_labels = st.multiselect("繰り返す曜日を選択", options=WEEKDAYS, key="inp_days")
         recurrence = [WEEKDAYS.index(d) for d in selected_labels]
         task_due = None
     else:
@@ -131,7 +174,6 @@ with st.sidebar:
             }
             tasks.append(new_task)
             save_data(data)
-            # 入力フィールドをリセット
             for k in ["inp_name", "inp_cat", "inp_recur", "inp_days", "inp_due"]:
                 st.session_state.pop(k, None)
             st.success(f"「{new_task['name']}」を追加しました！")
@@ -155,11 +197,11 @@ with st.sidebar:
     else:
         st.caption("タスクがありません")
 
-# ── メインエリア：タブ ──────────────────────────────────────────────────────────
+# ── タブ ───────────────────────────────────────────────────────────────────────
 
 tab_tasks, tab_calendar = st.tabs(["✅ タスク一覧", "📅 カレンダー"])
 
-# ────── タスク一覧タブ ──────────────────────────────────────────────────────────
+# ────── タスク一覧 ──────────────────────────────────────────────────────────────
 
 with tab_tasks:
     today = date.today()
@@ -194,7 +236,7 @@ with tab_tasks:
                     due = date.fromisoformat(task["due"])
                     days_left = (due - today).days
                     if days_left < 0:
-                        st.error(f"期限切れ")
+                        st.error("期限切れ")
                     elif days_left == 0:
                         st.warning("今日が期限！")
                     elif days_left <= 3:
@@ -204,8 +246,7 @@ with tab_tasks:
 
         st.subheader(f"📅 今日のタスク（{WEEKDAYS[today.weekday()]}曜日）")
         if today_tasks:
-            categories = sorted(set(t["category"] for t in today_tasks))
-            for cat in categories:
+            for cat in sorted(set(t["category"] for t in today_tasks)):
                 st.markdown(f"**📁 {cat}**")
                 for task in [t for t in today_tasks if t["category"] == cat]:
                     render_task_row(task)
@@ -225,7 +266,7 @@ with tab_tasks:
                     rec = recurrence_label(task.get("recurrence", []))
                     st.markdown(f"- {task['name']}　🔁 *毎週 {rec}*" if rec else f"- {task['name']}")
 
-# ────── カレンダータブ ──────────────────────────────────────────────────────────
+# ────── カレンダー ──────────────────────────────────────────────────────────────
 
 with tab_calendar:
     today = date.today()
@@ -235,6 +276,7 @@ with tab_calendar:
     if "cal_month" not in st.session_state:
         st.session_state.cal_month = today.month
 
+    # 月ナビゲーション
     col_prev, col_month, col_next = st.columns([1, 4, 1])
     with col_prev:
         if st.button("◀", use_container_width=True):
@@ -259,63 +301,18 @@ with tab_calendar:
                 st.session_state.cal_month += 1
             st.rerun()
 
-    year = st.session_state.cal_year
-    month = st.session_state.cal_month
-    cal = calendar.monthcalendar(year, month)
-    task_map = {t["id"]: t["name"] for t in tasks}
+    # カレンダーをHTMLテーブルで描画（スマホでも崩れない）
+    cal_html = build_calendar_html(
+        st.session_state.cal_year,
+        st.session_state.cal_month,
+        today, completions, tasks
+    )
+    st.markdown(cal_html, unsafe_allow_html=True)
 
-    header_cols = st.columns(7)
-    for i, label in enumerate(WEEKDAYS):
-        color = "#e74c3c" if i == 6 else ("#3498db" if i == 5 else "#f0f0f0")
-        header_cols[i].markdown(
-            f"<div style='text-align:center;font-weight:bold;font-size:18px;color:{color};padding:6px 0'>{label}</div>",
-            unsafe_allow_html=True,
-        )
-
-    for week in cal:
-        week_cols = st.columns(7)
-        for i, day in enumerate(week):
-            with week_cols[i]:
-                if day == 0:
-                    st.markdown("&nbsp;", unsafe_allow_html=True)
-                    continue
-
-                day_str = f"{year}-{month:02d}-{day:02d}"
-                cell_date = date(year, month, day)
-                is_today = cell_date == today
-
-                done_ids = completions.get(day_str, [])
-                done_names = [task_map[tid] for tid in done_ids if tid in task_map]
-                scheduled_names = [
-                    t["name"] for t in tasks
-                    if t.get("recurrence")
-                    and is_task_scheduled_for(t, cell_date)
-                    and t["id"] not in done_ids
-                ]
-
-                day_color = "#e74c3c" if i == 6 else ("#3498db" if i == 5 else "#f0f0f0")
-                bg = "background-color:#2a2a1a;border-radius:8px;padding:6px;" if is_today else "padding:6px;"
-                badge = f'<span style="background:#2ecc71;color:white;border-radius:10px;padding:2px 7px;font-size:13px;font-weight:bold">{len(done_names)}</span>' if done_names else ""
-
-                st.markdown(
-                    f"<div style='{bg}'>"
-                    f"<span class='cal-day' style='color:{day_color}'>{day}</span> {badge}"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-                for name in done_names:
-                    st.markdown(
-                        f"<div class='cal-done' title='{name}'>✓ {name}</div>",
-                        unsafe_allow_html=True,
-                    )
-                for name in scheduled_names:
-                    st.markdown(
-                        f"<div class='cal-sched' title='{name}'>○ {name}</div>",
-                        unsafe_allow_html=True,
-                    )
-
+    # 日別詳細
     st.divider()
     st.subheader("📋 日別 タスク詳細")
+    task_map = {t["id"]: t["name"] for t in tasks}
     selected_day = st.date_input("日付を選択", value=today, key="detail_date")
     sel_str = str(selected_day)
     sel_done_ids = completions.get(sel_str, [])
