@@ -28,6 +28,94 @@ def is_task_scheduled_for(task, target_date):
         return True
     return target_date.weekday() in recurrence
 
+def build_calendar_html(year, month, today, selected_date, completions, tasks):
+    task_map = {t["id"]: t["name"] for t in tasks}
+    cal = calendar.monthcalendar(year, month)
+    day_colors = ["#f0f0f0"] * 5 + ["#3498db", "#e74c3c"]
+
+    header_cells = ""
+    for label, color in zip(WEEKDAYS, day_colors):
+        header_cells += (
+            f'<th style="color:{color};font-size:16px;font-weight:bold;'
+            f'text-align:center;padding:8px 2px;border-bottom:1px solid #333;">'
+            f'{label}</th>'
+        )
+
+    rows_html = ""
+    for week in cal:
+        row = "<tr>"
+        for i, day in enumerate(week):
+            if day == 0:
+                row += '<td style="padding:4px;"></td>'
+                continue
+
+            day_str = f"{year}-{month:02d}-{day:02d}"
+            cell_date = date(year, month, day)
+            is_today = cell_date == today
+            is_selected = cell_date == selected_date
+
+            done_ids = completions.get(day_str, [])
+            done_names = [task_map[tid] for tid in done_ids if tid in task_map]
+            scheduled_names = [
+                t["name"] for t in tasks
+                if t.get("recurrence")
+                and is_task_scheduled_for(t, cell_date)
+                and t["id"] not in done_ids
+            ]
+
+            color = day_colors[i]
+
+            if is_selected and is_today:
+                cell_bg = "background:#3a3a10;border:2px solid #7c3aed;border-radius:8px;"
+            elif is_selected:
+                cell_bg = "background:#1e1a2e;border:2px solid #7c3aed;border-radius:8px;"
+            elif is_today:
+                cell_bg = "background:#2a2a1a;border-radius:8px;"
+            else:
+                cell_bg = "border-radius:8px;"
+
+            day_fw = "bold" if (is_today or is_selected) else "normal"
+
+            badge = ""
+            if done_names:
+                badge = (
+                    f'<span style="background:#2ecc71;color:#000;border-radius:8px;'
+                    f'padding:0 5px;font-size:11px;font-weight:bold;margin-left:2px">'
+                    f'{len(done_names)}</span>'
+                )
+
+            tasks_html = ""
+            for name in done_names[:2]:
+                tasks_html += (
+                    f'<div style="font-size:11px;color:#2ecc71;overflow:hidden;'
+                    f'text-overflow:ellipsis;white-space:nowrap;line-height:1.4">'
+                    f'✓{name}</div>'
+                )
+            for name in scheduled_names[:2]:
+                tasks_html += (
+                    f'<div style="font-size:11px;color:#e74c3c;overflow:hidden;'
+                    f'text-overflow:ellipsis;white-space:nowrap;line-height:1.4">'
+                    f'○{name}</div>'
+                )
+
+            row += (
+                f'<td style="padding:3px 2px;vertical-align:top;min-width:0;cursor:pointer;">'
+                f'<a href="?date={day_str}" style="text-decoration:none;display:block;">'
+                f'<div style="{cell_bg}padding:4px;">'
+                f'<span style="color:{color};font-size:18px;font-weight:{day_fw}">{day}</span>{badge}'
+                f'{tasks_html}'
+                f'</div></a></td>'
+            )
+        row += "</tr>"
+        rows_html += row
+
+    return (
+        f'<table style="width:100%;border-collapse:collapse;table-layout:fixed;">'
+        f'<thead><tr>{header_cells}</tr></thead>'
+        f'<tbody>{rows_html}</tbody>'
+        f'</table>'
+    )
+
 # ── ページ設定 ──────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="タスク管理", page_icon="✅", layout="wide")
@@ -61,6 +149,31 @@ st.title("📋 タスク管理アプリ")
 data = load_data()
 tasks = data["tasks"]
 completions = data["completions"]
+
+# ── セッション初期化 ────────────────────────────────────────────────────────────
+
+if "cal_selected" not in st.session_state:
+    st.session_state.cal_selected = date.today()
+if "cal_year" not in st.session_state:
+    st.session_state.cal_year = date.today().year
+if "cal_month" not in st.session_state:
+    st.session_state.cal_month = date.today().month
+if "view" not in st.session_state:
+    st.session_state.view = "✅ タスク一覧"
+
+# カレンダーの日付リンクをタップしたとき（?date=YYYY-MM-DD）
+raw_date = st.query_params.get("date", "")
+if raw_date:
+    try:
+        sel = date.fromisoformat(raw_date)
+        st.session_state.cal_selected = sel
+        st.session_state.cal_year = sel.year
+        st.session_state.cal_month = sel.month
+        st.session_state.view = "📅 カレンダー"
+        st.query_params.clear()
+        st.rerun()
+    except Exception:
+        pass
 
 # ── サイドバー ──────────────────────────────────────────────────────────────────
 
@@ -118,13 +231,21 @@ with st.sidebar:
     else:
         st.caption("タスクがありません")
 
-# ── タブ ───────────────────────────────────────────────────────────────────────
+# ── ナビゲーション ──────────────────────────────────────────────────────────────
 
-tab_tasks, tab_calendar = st.tabs(["✅ タスク一覧", "📅 カレンダー"])
+NAV_OPTIONS = ["✅ タスク一覧", "📅 カレンダー"]
+view = st.radio(
+    "ナビゲーション",
+    NAV_OPTIONS,
+    horizontal=True,
+    index=NAV_OPTIONS.index(st.session_state.view),
+    label_visibility="collapsed",
+)
+st.session_state.view = view
 
 # ────── タスク一覧 ──────────────────────────────────────────────────────────────
 
-with tab_tasks:
+if view == "✅ タスク一覧":
     today = date.today()
     today_str = str(today)
     today_done = set(completions.get(today_str, []))
@@ -235,18 +356,10 @@ with tab_tasks:
 
 # ────── カレンダー ──────────────────────────────────────────────────────────────
 
-with tab_calendar:
+else:
     today = date.today()
     task_map = {t["id"]: t["name"] for t in tasks}
 
-    if "cal_selected" not in st.session_state:
-        st.session_state.cal_selected = today
-    if "cal_year" not in st.session_state:
-        st.session_state.cal_year = today.year
-    if "cal_month" not in st.session_state:
-        st.session_state.cal_month = today.month
-
-    # 月ナビゲーション
     col_prev, col_month, col_next = st.columns([1, 4, 1])
     with col_prev:
         if st.button("◀", use_container_width=True, key="cal_prev"):
@@ -271,64 +384,16 @@ with tab_calendar:
                 st.session_state.cal_month += 1
             st.rerun()
 
-    year = st.session_state.cal_year
-    month = st.session_state.cal_month
-    cal_grid = calendar.monthcalendar(year, month)
-    day_colors = ["#f0f0f0"] * 5 + ["#3498db", "#e74c3c"]
+    cal_html = build_calendar_html(
+        st.session_state.cal_year,
+        st.session_state.cal_month,
+        today,
+        st.session_state.cal_selected,
+        completions,
+        tasks,
+    )
+    st.markdown(cal_html, unsafe_allow_html=True)
 
-    # 曜日ヘッダー
-    header_cols = st.columns(7)
-    for col, label, color in zip(header_cols, WEEKDAYS, day_colors):
-        with col:
-            st.markdown(
-                f'<div style="text-align:center;color:{color};font-weight:bold;'
-                f'font-size:16px;padding:6px 2px;border-bottom:1px solid #444;">{label}</div>',
-                unsafe_allow_html=True,
-            )
-
-    # 日付グリッド（ボタン）
-    for week in cal_grid:
-        cols = st.columns(7)
-        for col, day in zip(cols, week):
-            with col:
-                if day == 0:
-                    st.write("")
-                    continue
-
-                cell_date = date(year, month, day)
-                day_str = str(cell_date)
-                is_today = cell_date == today
-                is_selected = cell_date == st.session_state.cal_selected
-
-                done_ids = set(completions.get(day_str, []))
-                done_count = len([tid for tid in done_ids if tid in task_map])
-                sched_undone = len([
-                    t for t in tasks
-                    if t.get("recurrence")
-                    and is_task_scheduled_for(t, cell_date)
-                    and t["id"] not in done_ids
-                ])
-
-                # ラベル：今日は★マーク
-                prefix = "★" if is_today else ""
-                badges = []
-                if done_count:
-                    badges.append(f"✅{done_count}")
-                if sched_undone:
-                    badges.append(f"🔴{sched_undone}")
-                label = f"{prefix}{day}" + ("\n" + " ".join(badges) if badges else "")
-
-                btn_type = "primary" if is_selected else "secondary"
-                if st.button(
-                    label,
-                    key=f"day_{year}_{month}_{day}",
-                    use_container_width=True,
-                    type=btn_type,
-                ):
-                    st.session_state.cal_selected = cell_date
-                    st.rerun()
-
-    # 選択日の詳細パネル
     st.divider()
     selected_date = st.session_state.cal_selected
     sel_str = str(selected_date)
