@@ -31,6 +31,62 @@ def is_task_scheduled_for(task, target_date):
 # ── ページ設定 ──────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="タスク管理", page_icon="✅", layout="wide")
+
+st.markdown("""
+<style>
+/* ── モバイル・全体 ── */
+.stApp { font-size: 16px; }
+
+.stButton > button {
+    min-height: 48px;
+    font-size: 16px;
+    border-radius: 10px;
+}
+.stCheckbox label {
+    font-size: 17px !important;
+    line-height: 1.6 !important;
+}
+.stTextInput input, .stSelectbox select {
+    font-size: 16px !important;
+}
+.stMultiSelect label, .stMultiSelect div {
+    font-size: 15px !important;
+}
+
+/* ── カレンダーセル ── */
+.cal-day {
+    font-size: 20px;
+    font-weight: bold;
+    line-height: 1.8;
+}
+.cal-done {
+    font-size: 13px;
+    color: #2ecc71;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cal-sched {
+    font-size: 13px;
+    color: #666;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── スマホ用追加調整 ── */
+@media (max-width: 768px) {
+    .stButton > button { min-height: 56px; font-size: 17px; }
+    h1 { font-size: 1.5rem !important; }
+    h2 { font-size: 1.3rem !important; }
+    h3 { font-size: 1.2rem !important; }
+    .stCheckbox label { font-size: 18px !important; }
+    .cal-day { font-size: 17px; }
+    .cal-done, .cal-sched { font-size: 11px; }
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.title("📋 タスク管理アプリ")
 
 data = load_data()
@@ -212,7 +268,7 @@ with tab_calendar:
     for i, label in enumerate(WEEKDAYS):
         color = "#e74c3c" if i == 6 else ("#3498db" if i == 5 else "#f0f0f0")
         header_cols[i].markdown(
-            f"<div style='text-align:center;font-weight:bold;color:{color}'>{label}</div>",
+            f"<div style='text-align:center;font-weight:bold;font-size:18px;color:{color};padding:6px 0'>{label}</div>",
             unsafe_allow_html=True,
         )
 
@@ -238,23 +294,23 @@ with tab_calendar:
                 ]
 
                 day_color = "#e74c3c" if i == 6 else ("#3498db" if i == 5 else "#f0f0f0")
-                bg = "background-color:#2a2a1a;border-radius:6px;padding:4px;" if is_today else "padding:4px;"
-                badge = f'<span style="background:#2ecc71;color:white;border-radius:10px;padding:1px 6px;font-size:11px">{len(done_names)}</span>' if done_names else ""
+                bg = "background-color:#2a2a1a;border-radius:8px;padding:6px;" if is_today else "padding:6px;"
+                badge = f'<span style="background:#2ecc71;color:white;border-radius:10px;padding:2px 7px;font-size:13px;font-weight:bold">{len(done_names)}</span>' if done_names else ""
 
                 st.markdown(
                     f"<div style='{bg}'>"
-                    f"<span style='color:{day_color};font-weight:{'bold' if is_today else 'normal'}'>{day}</span> {badge}"
+                    f"<span class='cal-day' style='color:{day_color}'>{day}</span> {badge}"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
                 for name in done_names:
                     st.markdown(
-                        f"<div style='font-size:10px;color:#2ecc71;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' title='{name}'>✓ {name}</div>",
+                        f"<div class='cal-done' title='{name}'>✓ {name}</div>",
                         unsafe_allow_html=True,
                     )
                 for name in scheduled_names:
                     st.markdown(
-                        f"<div style='font-size:10px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' title='{name}'>○ {name}</div>",
+                        f"<div class='cal-sched' title='{name}'>○ {name}</div>",
                         unsafe_allow_html=True,
                     )
 
