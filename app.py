@@ -98,9 +98,12 @@ def build_calendar_html(year, month, today, selected_date, completions, tasks):
                     f'○{name}</div>'
                 )
 
+            # target="_self" で新規タブを防止、replace() でブラウザ履歴を増やさない
             row += (
-                f'<td style="padding:3px 2px;vertical-align:top;min-width:0;cursor:pointer;">'
-                f'<a href="?date={day_str}" style="text-decoration:none;display:block;">'
+                f'<td style="padding:3px 2px;vertical-align:top;min-width:0;">'
+                f'<a href="?date={day_str}" target="_self"'
+                f' onclick="event.preventDefault();window.location.replace(\'?date={day_str}\')"'
+                f' style="text-decoration:none;display:block;cursor:pointer;">'
                 f'<div style="{cell_bg}padding:4px;">'
                 f'<span style="color:{color};font-size:18px;font-weight:{day_fw}">{day}</span>{badge}'
                 f'{tasks_html}'
@@ -158,6 +161,8 @@ if "cal_year" not in st.session_state:
     st.session_state.cal_year = date.today().year
 if "cal_month" not in st.session_state:
     st.session_state.cal_month = date.today().month
+if "view" not in st.session_state:
+    st.session_state["view"] = "✅ タスク一覧"
 
 # カレンダー日付タップ時（?date=YYYY-MM-DD）
 raw_date = st.query_params.get("date", "")
@@ -167,6 +172,7 @@ if raw_date:
         st.session_state.cal_selected = sel
         st.session_state.cal_year = sel.year
         st.session_state.cal_month = sel.month
+        st.session_state["view"] = "📅 カレンダー"
         st.query_params.clear()
         st.rerun()
     except Exception:
@@ -228,178 +234,188 @@ with st.sidebar:
     else:
         st.caption("タスクがありません")
 
-# ────── 今日のタスク ────────────────────────────────────────────────────────────
+# ── ナビゲーション ──────────────────────────────────────────────────────────────
 
-today = date.today()
-today_str = str(today)
-today_done = set(completions.get(today_str, []))
-today_tasks = [t for t in tasks if is_task_scheduled_for(t, today)]
-other_tasks  = [t for t in tasks if not is_task_scheduled_for(t, today)]
+NAV_OPTIONS = ["✅ タスク一覧", "📅 カレンダー"]
+view = st.radio(
+    "ナビゲーション",
+    NAV_OPTIONS,
+    horizontal=True,
+    key="view",
+    label_visibility="collapsed",
+)
 
-st.subheader(f"📅 今日のタスク（{WEEKDAYS[today.weekday()]}曜日）")
+# ────── タスク一覧 ──────────────────────────────────────────────────────────────
 
-if not tasks:
-    st.info("タスクがありません。サイドバーからタスクを追加してください。")
-else:
-    def render_task_row(task):
-        task_id = task["id"]
-        is_done = task_id in today_done
-        editing = st.session_state.get(f"editing_{task_id}", False)
-        rec = recurrence_label(task.get("recurrence", []))
+if view == "✅ タスク一覧":
+    today = date.today()
+    today_str = str(today)
+    today_done = set(completions.get(today_str, []))
+    today_tasks = [t for t in tasks if is_task_scheduled_for(t, today)]
+    other_tasks  = [t for t in tasks if not is_task_scheduled_for(t, today)]
 
-        col1, col2 = st.columns([5, 2])
-        with col1:
-            if editing:
-                new_name = st.text_input(
-                    "タスク名を変更",
-                    value=task["name"],
-                    key=f"edit_input_{task_id}",
-                )
-                c_save, c_cancel = st.columns(2)
-                with c_save:
-                    if st.button("保存", key=f"save_{task_id}", type="primary", use_container_width=True):
-                        if new_name.strip():
-                            task["name"] = new_name.strip()
-                            save_data(data)
-                        st.session_state.pop(f"editing_{task_id}", None)
-                        st.rerun()
-                with c_cancel:
-                    if st.button("キャンセル", key=f"cancel_{task_id}", use_container_width=True):
-                        st.session_state.pop(f"editing_{task_id}", None)
-                        st.rerun()
-            else:
-                icon = "✅" if is_done else "○"
-                if st.button(
-                    f"{icon}  {task['name']}",
-                    key=f"name_btn_{task_id}",
-                    use_container_width=True,
-                    help="クリックして名前を変更",
-                ):
-                    st.session_state[f"editing_{task_id}"] = True
-                    st.rerun()
-                if rec:
-                    st.caption(f"🔁 毎週 {rec}")
-                checked = st.checkbox(
-                    "完了" if not is_done else "取り消し",
-                    value=is_done,
-                    key=f"chk_{task_id}",
-                )
-                if checked != is_done:
-                    if checked:
-                        today_done.add(task_id)
-                    else:
-                        today_done.discard(task_id)
-                    completions[today_str] = list(today_done)
-                    save_data(data)
-                    st.rerun()
-        with col2:
-            if task.get("due") and not editing:
-                due = date.fromisoformat(task["due"])
-                days_left = (due - today).days
-                if days_left < 0:
-                    st.error("期限切れ")
-                elif days_left == 0:
-                    st.warning("今日が期限！")
-                elif days_left <= 3:
-                    st.warning(f"あと {days_left} 日")
-                else:
-                    st.caption(f"期限: {task['due']}")
-
-    if today_tasks:
-        incomplete = [t for t in today_tasks if t["id"] not in today_done]
-        complete   = [t for t in today_tasks if t["id"] in today_done]
-
-        if incomplete:
-            st.markdown("#### 🔴 未達成")
-            for cat in sorted(set(t["category"] for t in incomplete)):
-                st.markdown(f"**📁 {cat}**")
-                for task in [t for t in incomplete if t["category"] == cat]:
-                    render_task_row(task)
-
-        if complete:
-            st.markdown("#### 🟢 達成")
-            for cat in sorted(set(t["category"] for t in complete)):
-                st.markdown(f"**📁 {cat}**")
-                for task in [t for t in complete if t["category"] == cat]:
-                    render_task_row(task)
+    if not tasks:
+        st.info("タスクがありません。サイドバーからタスクを追加してください。")
     else:
-        st.caption("今日のタスクはありません")
+        def render_task_row(task):
+            task_id = task["id"]
+            is_done = task_id in today_done
+            editing = st.session_state.get(f"editing_{task_id}", False)
+            rec = recurrence_label(task.get("recurrence", []))
 
-    done_count  = len([t for t in today_tasks if t["id"] in today_done])
-    total_today = len(today_tasks)
-    pct = done_count / total_today if total_today > 0 else 0
-    st.metric("今日の進捗", f"{done_count} / {total_today} 完了")
-    st.progress(pct)
+            col1, col2 = st.columns([5, 2])
+            with col1:
+                if editing:
+                    new_name = st.text_input(
+                        "タスク名を変更",
+                        value=task["name"],
+                        key=f"edit_input_{task_id}",
+                    )
+                    c_save, c_cancel = st.columns(2)
+                    with c_save:
+                        if st.button("保存", key=f"save_{task_id}", type="primary", use_container_width=True):
+                            if new_name.strip():
+                                task["name"] = new_name.strip()
+                                save_data(data)
+                            st.session_state.pop(f"editing_{task_id}", None)
+                            st.rerun()
+                    with c_cancel:
+                        if st.button("キャンセル", key=f"cancel_{task_id}", use_container_width=True):
+                            st.session_state.pop(f"editing_{task_id}", None)
+                            st.rerun()
+                else:
+                    icon = "✅" if is_done else "○"
+                    if st.button(
+                        f"{icon}  {task['name']}",
+                        key=f"name_btn_{task_id}",
+                        use_container_width=True,
+                        help="クリックして名前を変更",
+                    ):
+                        st.session_state[f"editing_{task_id}"] = True
+                        st.rerun()
+                    if rec:
+                        st.caption(f"🔁 毎週 {rec}")
+                    checked = st.checkbox(
+                        "完了" if not is_done else "取り消し",
+                        value=is_done,
+                        key=f"chk_{task_id}",
+                    )
+                    if checked != is_done:
+                        if checked:
+                            today_done.add(task_id)
+                        else:
+                            today_done.discard(task_id)
+                        completions[today_str] = list(today_done)
+                        save_data(data)
+                        st.rerun()
+            with col2:
+                if task.get("due") and not editing:
+                    due = date.fromisoformat(task["due"])
+                    days_left = (due - today).days
+                    if days_left < 0:
+                        st.error("期限切れ")
+                    elif days_left == 0:
+                        st.warning("今日が期限！")
+                    elif days_left <= 3:
+                        st.warning(f"あと {days_left} 日")
+                    else:
+                        st.caption(f"期限: {task['due']}")
 
-    if other_tasks:
-        with st.expander("📋 他の曜日のタスクを見る"):
-            for task in other_tasks:
-                rec = recurrence_label(task.get("recurrence", []))
-                st.markdown(f"- {task['name']}　🔁 *毎週 {rec}*" if rec else f"- {task['name']}")
+        st.subheader(f"📅 今日のタスク（{WEEKDAYS[today.weekday()]}曜日）")
+        if today_tasks:
+            incomplete = [t for t in today_tasks if t["id"] not in today_done]
+            complete   = [t for t in today_tasks if t["id"] in today_done]
+
+            if incomplete:
+                st.markdown("#### 🔴 未達成")
+                for cat in sorted(set(t["category"] for t in incomplete)):
+                    st.markdown(f"**📁 {cat}**")
+                    for task in [t for t in incomplete if t["category"] == cat]:
+                        render_task_row(task)
+
+            if complete:
+                st.markdown("#### 🟢 達成")
+                for cat in sorted(set(t["category"] for t in complete)):
+                    st.markdown(f"**📁 {cat}**")
+                    for task in [t for t in complete if t["category"] == cat]:
+                        render_task_row(task)
+        else:
+            st.caption("今日のタスクはありません")
+
+        done_count  = len([t for t in today_tasks if t["id"] in today_done])
+        total_today = len(today_tasks)
+        pct = done_count / total_today if total_today > 0 else 0
+        st.metric("今日の進捗", f"{done_count} / {total_today} 完了")
+        st.progress(pct)
+
+        if other_tasks:
+            with st.expander("📋 他の曜日のタスクを見る"):
+                for task in other_tasks:
+                    rec = recurrence_label(task.get("recurrence", []))
+                    st.markdown(f"- {task['name']}　🔁 *毎週 {rec}*" if rec else f"- {task['name']}")
 
 # ────── カレンダー ──────────────────────────────────────────────────────────────
 
-st.divider()
+else:
+    today = date.today()
+    task_map = {t["id"]: t["name"] for t in tasks}
 
-task_map = {t["id"]: t["name"] for t in tasks}
+    col_prev, col_month, col_next = st.columns([1, 4, 1])
+    with col_prev:
+        if st.button("◀", use_container_width=True, key="cal_prev"):
+            if st.session_state.cal_month == 1:
+                st.session_state.cal_month = 12
+                st.session_state.cal_year -= 1
+            else:
+                st.session_state.cal_month -= 1
+            st.rerun()
+    with col_month:
+        st.markdown(
+            f"<h3 style='text-align:center;margin:0'>"
+            f"{st.session_state.cal_year}年 {st.session_state.cal_month}月</h3>",
+            unsafe_allow_html=True,
+        )
+    with col_next:
+        if st.button("▶", use_container_width=True, key="cal_next"):
+            if st.session_state.cal_month == 12:
+                st.session_state.cal_month = 1
+                st.session_state.cal_year += 1
+            else:
+                st.session_state.cal_month += 1
+            st.rerun()
 
-col_prev, col_month, col_next = st.columns([1, 4, 1])
-with col_prev:
-    if st.button("◀", use_container_width=True, key="cal_prev"):
-        if st.session_state.cal_month == 1:
-            st.session_state.cal_month = 12
-            st.session_state.cal_year -= 1
-        else:
-            st.session_state.cal_month -= 1
-        st.rerun()
-with col_month:
-    st.markdown(
-        f"<h3 style='text-align:center;margin:0'>"
-        f"{st.session_state.cal_year}年 {st.session_state.cal_month}月</h3>",
-        unsafe_allow_html=True,
+    cal_html = build_calendar_html(
+        st.session_state.cal_year,
+        st.session_state.cal_month,
+        today,
+        st.session_state.cal_selected,
+        completions,
+        tasks,
     )
-with col_next:
-    if st.button("▶", use_container_width=True, key="cal_next"):
-        if st.session_state.cal_month == 12:
-            st.session_state.cal_month = 1
-            st.session_state.cal_year += 1
-        else:
-            st.session_state.cal_month += 1
-        st.rerun()
+    st.markdown(cal_html, unsafe_allow_html=True)
 
-cal_html = build_calendar_html(
-    st.session_state.cal_year,
-    st.session_state.cal_month,
-    today,
-    st.session_state.cal_selected,
-    completions,
-    tasks,
-)
-st.markdown(cal_html, unsafe_allow_html=True)
+    st.divider()
+    selected_date  = st.session_state.cal_selected
+    sel_str        = str(selected_date)
+    sel_done_ids   = completions.get(sel_str, [])
+    sel_done_names = [task_map[tid] for tid in sel_done_ids if tid in task_map]
+    sel_scheduled  = [
+        t["name"] for t in tasks
+        if t.get("recurrence")
+        and is_task_scheduled_for(t, selected_date)
+        and t["id"] not in sel_done_ids
+    ]
 
-# 選択日の詳細
-st.divider()
-selected_date = st.session_state.cal_selected
-sel_str       = str(selected_date)
-sel_done_ids  = completions.get(sel_str, [])
-sel_done_names = [task_map[tid] for tid in sel_done_ids if tid in task_map]
-sel_scheduled  = [
-    t["name"] for t in tasks
-    if t.get("recurrence")
-    and is_task_scheduled_for(t, selected_date)
-    and t["id"] not in sel_done_ids
-]
+    wd = WEEKDAYS[selected_date.weekday()]
+    st.subheader(f"📋 {selected_date.month}月{selected_date.day}日（{wd}）の詳細")
 
-wd = WEEKDAYS[selected_date.weekday()]
-st.subheader(f"📋 {selected_date.month}月{selected_date.day}日（{wd}）の詳細")
-
-if sel_scheduled:
-    st.markdown("**🔴 未達成**")
-    for name in sel_scheduled:
-        st.markdown(f'<div style="color:#e74c3c;font-size:16px">○ {name}</div>', unsafe_allow_html=True)
-if sel_done_names:
-    st.markdown("**🟢 達成**")
-    for name in sel_done_names:
-        st.markdown(f'<div style="color:#2ecc71;font-size:16px">✅ {name}</div>', unsafe_allow_html=True)
-if not sel_done_names and not sel_scheduled:
-    st.caption("この日のタスクはありません。")
+    if sel_scheduled:
+        st.markdown("**🔴 未達成**")
+        for name in sel_scheduled:
+            st.markdown(f'<div style="color:#e74c3c;font-size:16px">○ {name}</div>', unsafe_allow_html=True)
+    if sel_done_names:
+        st.markdown("**🟢 達成**")
+        for name in sel_done_names:
+            st.markdown(f'<div style="color:#2ecc71;font-size:16px">✅ {name}</div>', unsafe_allow_html=True)
+    if not sel_done_names and not sel_scheduled:
+        st.caption("この日のタスクはありません。")
