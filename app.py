@@ -238,10 +238,9 @@ view = st.radio(
     "ナビゲーション",
     NAV_OPTIONS,
     horizontal=True,
-    index=NAV_OPTIONS.index(st.session_state.view),
+    key="view",
     label_visibility="collapsed",
 )
-st.session_state.view = view
 
 # ────── タスク一覧 ──────────────────────────────────────────────────────────────
 
