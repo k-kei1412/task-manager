@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <title>✅ タスク管理</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { -webkit-tap-highlight-color: transparent; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', sans-serif; }
+        .tab-active { border-bottom: 3px solid #0d9488; color: #0d9488; font-weight: 700; }
+        .tab-inactive { border-bottom: 3px solid transparent; color: #9ca3af; }
+        .slide-up { animation: slideUp 0.2s ease-out; }
+        @keyframes slideUp { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: #1f2937; color: white; padding: 10px 20px; border-radius: 20px; font-size: 14px; z-index: 9999; animation: fadeInOut 2.5s ease forwards; white-space: nowrap; }
+        @keyframes fadeInOut { 0%{opacity:0;transform:translateX(-50%) translateY(10px)} 15%{opacity:1;transform:translateX(-50%) translateY(0)} 70%{opacity:1} 100%{opacity:0} }
+        .cal-btn { width: 100%; min-height: 44px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 3px 2px; font-size: 11px; line-height: 1.3; text-align: center; cursor: pointer; background: white; transition: all 0.15s; }
+        .cal-btn:active { transform: scale(0.95); }
+        .cal-btn.today { font-weight: 800; background: #f0fdfa; border-color: #0d9488; color: #0d9488; }
+        .cal-btn.selected { background: #0d9488 !important; color: white !important; border-color: #0d9488; }
+        .progress-bar { transition: width 0.4s ease; }
+        .drawer { transform: translateX(100%); transition: transform 0.3s ease; }
+        .drawer.open { transform: translateX(0); }
+        .overlay { opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+        .overlay.open { opacity: 1; pointer-events: auto; }
+        .weekday-btn.selected { background: #0d9488 !important; color: white !important; border-color: #0d9488 !important; }
+        details summary { list-style: none; cursor: pointer; }
+        details summary::-webkit-details-marker { display: none; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 min-h-screen">
+
+    <!-- ヘッダー -->
+    <header class="bg-teal-600 text-white px-4 pt-10 pb-4 sticky top-0 z-20 shadow-md">
+        <div class="max-w-lg mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold">✅ タスク管理</h1>
+            <button onclick="openDrawer()" class="text-2xl opacity-80 active:opacity-50 px-1" title="タスクを追加・削除">☰</button>
+        </div>
+    </header>
+
+    <!-- タブナビ -->
+    <nav class="bg-white shadow-sm sticky top-[88px] z-10">
+        <div class="max-w-lg mx-auto flex">
+            <button class="flex-1 py-3 text-sm tab-active" id="tab-tasks" onclick="switchTab('tasks')">✅ タスク一覧</button>
+            <button class="flex-1 py-3 text-sm tab-inactive" id="tab-calendar" onclick="switchTab('calendar')">📅 カレンダー</button>
+        </div>
+    </nav>
+
+    <div class="max-w-lg mx-auto px-4 py-4 pb-24">
+
+        <!-- ===== タブ1: タスク一覧 ===== -->
+        <div id="page-tasks">
+            <div id="tasks-content"></div>
+        </div>
+
+        <!-- ===== タブ2: カレンダー ===== -->
+        <div id="page-calendar" class="hidden">
+            <!-- 月ナビゲーション -->
+            <div class="flex items-center gap-2 mb-3">
+                <button onclick="calPrev()"
+                    class="w-10 h-10 bg-white border border-gray-200 rounded-xl flex items-center justify-center text-lg active:bg-gray-50 shadow-sm shrink-0">◀</button>
+                <h3 class="flex-1 text-center font-bold text-gray-800" id="cal-month-label"></h3>
+                <button onclick="calNext()"
+                    class="w-10 h-10 bg-white border border-gray-200 rounded-xl flex items-center justify-center text-lg active:bg-gray-50 shadow-sm shrink-0">▶</button>
+            </div>
+            <!-- 曜日ヘッダー -->
+            <div class="grid grid-cols-7 mb-1" id="cal-header"></div>
+            <!-- 日付グリッド -->
+            <div id="cal-grid" class="space-y-1"></div>
+            <!-- 選択日詳細 -->
+            <div class="mt-4 bg-white rounded-2xl shadow-sm border border-gray-100 p-4" id="cal-detail"></div>
+        </div>
+
+    </div>
+
+    <!-- ===== オーバーレイ ===== -->
+    <div class="overlay fixed inset-0 bg-black/40 z-30" id="drawer-overlay" onclick="closeDrawer()"></div>
+
+    <!-- ===== ドロワー (タスク追加・削除) ===== -->
+    <div class="drawer fixed top-0 right-0 h-full w-80 max-w-[90vw] bg-white z-40 shadow-2xl overflow-y-auto" id="drawer">
+        <div class="p-5 pt-12">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="font-bold text-gray-800 text-lg">タスク管理</h2>
+                <button onclick="closeDrawer()" class="text-gray-400 text-2xl leading-none">&times;</button>
+            </div>
+
+            <!-- タスク追加 -->
+            <h3 class="font-bold text-gray-700 text-sm mb-3">➕ タスクを追加</h3>
+            <div class="space-y-3 mb-6">
+                <input type="text" id="inp-name" placeholder="タスク名（例：レポートを書く）"
+                    class="w-full p-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-400">
+                <select id="inp-cat"
+                    class="w-full p-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white">
+                    <option value="勉強">📚 勉強</option>
+                    <option value="研究">🔬 研究</option>
+                    <option value="生活">🏠 生活</option>
+                    <option value="その他">📦 その他</option>
+                </select>
+                <label class="flex items-center gap-2 cursor-pointer p-3 bg-gray-50 rounded-xl">
+                    <input type="checkbox" id="inp-recur" onchange="toggleRecurMode()"
+                        class="w-4 h-4 accent-teal-600">
+                    <span class="text-sm text-gray-700">毎週繰り返す</span>
+                </label>
+                <div id="recur-section" class="hidden">
+                    <p class="text-xs text-gray-500 mb-2 font-bold">繰り返す曜日を選択</p>
+                    <div class="flex gap-1.5 flex-wrap" id="weekday-btns"></div>
+                </div>
+                <div id="due-section">
+                    <label class="block text-xs text-gray-500 font-bold mb-1">期限（任意）</label>
+                    <input type="date" id="inp-due"
+                        class="w-full p-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-400">
+                </div>
+                <button onclick="addTask()"
+                    class="w-full bg-teal-600 text-white py-3 rounded-xl font-bold text-sm shadow active:scale-95 transition">
+                    追加する
+                </button>
+            </div>
+
+            <hr class="border-gray-200 mb-5">
+
+            <!-- タスク削除 -->
+            <h3 class="font-bold text-gray-700 text-sm mb-3">🗑️ タスクを削除</h3>
+            <div class="space-y-3">
+                <select id="del-select"
+                    class="w-full p-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 bg-white">
+                    <option value="">削除するタスクを選択</option>
+                </select>
+                <button onclick="deleteTask()"
+                    class="w-full border border-red-200 text-red-500 py-3 rounded-xl font-bold text-sm active:bg-red-50 transition">
+                    削除する
+                </button>
+            </div>
+        </div>
+    </div>
+
+<script>
+// ===== 定数 =====
+const WEEKDAYS = ['月', '火', '水', '木', '金', '土', '日'];
+const CATEGORIES = ['勉強', '研究', '生活', 'その他'];
+const CAT_EMOJI = { '勉強': '📚', '研究': '🔬', '生活': '🏠', 'その他': '📦' };
+const DATA_KEY = 'task_manager_data';
+
+// ===== データ管理 =====
+function loadData() {
+    try { return JSON.parse(localStorage.getItem(DATA_KEY)) || { tasks: [], completions: {} }; }
+    catch { return { tasks: [], completions: {} }; }
+}
+
+function saveData(data) {
+    localStorage.setItem(DATA_KEY, JSON.stringify(data));
+}
+
+// ===== 状態 =====
+let currentTab = 'tasks';
+let calYear = new Date().getFullYear();
+let calMonth = new Date().getMonth() + 1;
+let calSelected = todayStr();
+let editingTaskId = null;
+let selectedWeekdays = new Set();
+
+function todayStr() {
+    return new Date().toISOString().split('T')[0];
+}
+
+// 曜日インデックス変換: JS getDay() → 0=月...6=日
+function jsDay(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    return (d.getDay() + 6) % 7;
+}
+
+// ===== タブ切り替え =====
+function switchTab(tab) {
+    currentTab = tab;
+    ['tasks', 'calendar'].forEach(t => {
+        document.getElementById(`page-${t}`).classList.toggle('hidden', t !== tab);
+        const el = document.getElementById(`tab-${t}`);
+        if (el) el.className = `flex-1 py-3 text-sm ${t === tab ? 'tab-active' : 'tab-inactive'}`;
+    });
+    if (tab === 'tasks') renderTaskList();
+    if (tab === 'calendar') renderCalendar();
+}
+
+// ===== タスク一覧 =====
+function isScheduledFor(task, dateStr) {
+    const rec = task.recurrence || [];
+    if (!rec.length) return true;
+    return rec.includes(jsDay(dateStr));
+}
+
+function renderTaskList() {
+    const data = loadData();
+    const today = todayStr();
+    const todayDone = new Set(data.completions[today] || []);
+    const d = new Date(today + 'T00:00:00');
+    const wd = WEEKDAYS[(d.getDay() + 6) % 7];
+    const label = `${d.getMonth()+1}月${d.getDate()}日（${wd}曜日）`;
+
+    const todayTasks = data.tasks.filter(t => isScheduledFor(t, today));
+    const otherTasks  = data.tasks.filter(t => !isScheduledFor(t, today));
+
+    let html = `<div class="mb-4"><h2 class="font-bold text-gray-700 text-base">📅 今日のタスク <span class="font-normal text-sm text-gray-400">${label}</span></h2></div>`;
+
+    if (data.tasks.length === 0) {
+        html += `<div class="text-center py-14 text-gray-400">
+            <div class="text-5xl mb-3">📭</div>
+            <p class="text-sm">タスクがありません</p>
+            <p class="text-xs mt-1">右上の ☰ からタスクを追加してください</p>
+        </div>`;
+    } else {
+        const incomplete = todayTasks.filter(t => !todayDone.has(t.id));
+        const complete   = todayTasks.filter(t =>  todayDone.has(t.id));
+
+        if (todayTasks.length === 0) {
+            html += `<div class="text-center py-6 text-gray-400 bg-white rounded-2xl border border-gray-100 shadow-sm mb-4">
+                <p class="text-sm">今日のタスクはありません</p>
+            </div>`;
+        } else {
+            if (incomplete.length > 0) {
+                html += `<div class="mb-4">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-red-500 font-bold text-sm">🔴 未達成</span>
+                        <span class="text-xs text-gray-400">${incomplete.length}件</span>
+                    </div>`;
+                for (const [cat, tasks] of Object.entries(groupByCat(incomplete))) {
+                    html += `<div class="mb-3">
+                        <p class="text-xs font-bold text-gray-500 mb-1.5">${CAT_EMOJI[cat]||'📦'} ${cat}</p>
+                        ${tasks.map(t => renderRow(t, false, today)).join('')}
+                    </div>`;
+                }
+                html += `</div>`;
+            }
+            if (complete.length > 0) {
+                html += `<div class="mb-4">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-green-500 font-bold text-sm">🟢 達成</span>
+                        <span class="text-xs text-gray-400">${complete.length}件</span>
+                    </div>`;
+                for (const [cat, tasks] of Object.entries(groupByCat(complete))) {
+                    html += `<div class="mb-3">
+                        <p class="text-xs font-bold text-gray-500 mb-1.5">${CAT_EMOJI[cat]||'📦'} ${cat}</p>
+                        ${tasks.map(t => renderRow(t, true, today)).join('')}
+                    </div>`;
+                }
+                html += `</div>`;
+            }
+        }
+
+        // 進捗
+        const done  = complete ? complete.length : 0;
+        const total = todayTasks.length;
+        const pct   = total > 0 ? Math.round(done / total * 100) : 0;
+        const barCol = pct === 100 ? 'bg-green-400' : pct >= 50 ? 'bg-teal-500' : 'bg-yellow-400';
+        html += `
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-4">
+            <div class="flex justify-between items-center mb-2">
+                <span class="text-sm font-bold text-gray-700">今日の進捗</span>
+                <span class="text-sm font-bold ${pct===100 ? 'text-green-500' : 'text-teal-600'}">${done} / ${total} 完了（${pct}%）</span>
+            </div>
+            <div class="bg-gray-100 rounded-full h-3 overflow-hidden">
+                <div class="progress-bar ${barCol} h-3 rounded-full" style="width:${pct}%"></div>
+            </div>
+        </div>`;
+
+        // 他の曜日のタスク
+        if (otherTasks.length > 0) {
+            html += `
+            <details class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <summary class="p-4 flex justify-between items-center text-sm font-bold text-gray-600 select-none">
+                    <span>📋 他の曜日のタスク（${otherTasks.length}件）</span>
+                    <span class="text-gray-400 text-xs">▼</span>
+                </summary>
+                <div class="px-4 pb-4 space-y-1">
+                    ${otherTasks.map(t => {
+                        const rec = (t.recurrence||[]).map(d => WEEKDAYS[d]).join('・');
+                        return `<div class="py-1.5 border-b border-gray-50 last:border-0 text-sm text-gray-600">
+                            ${escHtml(t.name)}${rec ? `<span class="text-xs text-gray-400 ml-1.5">🔁 毎週 ${rec}</span>` : ''}
+                        </div>`;
+                    }).join('')}
+                </div>
+            </details>`;
+        }
+    }
+
+    document.getElementById('tasks-content').innerHTML = html;
+}
+
+function renderRow(task, isDone, dateStr) {
+    const rec = (task.recurrence||[]).map(d => WEEKDAYS[d]).join('・');
+    const today = new Date(dateStr + 'T00:00:00');
+    let dueHtml = '';
+    if (task.due) {
+        const due = new Date(task.due + 'T00:00:00');
+        const diff = Math.round((due - today) / 86400000);
+        if      (diff < 0)  dueHtml = `<span class="text-xs text-red-500 font-bold ml-1.5">期限切れ</span>`;
+        else if (diff === 0) dueHtml = `<span class="text-xs text-orange-500 font-bold ml-1.5">今日が期限！</span>`;
+        else if (diff <= 3)  dueHtml = `<span class="text-xs text-orange-400 ml-1.5">あと${diff}日</span>`;
+        else                 dueHtml = `<span class="text-xs text-gray-400 ml-1.5">期限: ${task.due}</span>`;
+    }
+
+    if (editingTaskId === task.id) {
+        return `
+        <div class="bg-white rounded-xl p-3 shadow-sm border border-teal-200 mb-2 slide-up">
+            <input type="text" id="edit-input-${task.id}" value="${escHtml(task.name)}"
+                class="w-full p-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 mb-2">
+            <div class="flex gap-2">
+                <button onclick="cancelEdit()"
+                    class="flex-1 py-2 border border-gray-200 rounded-xl text-xs text-gray-500 active:bg-gray-50">キャンセル</button>
+                <button onclick="saveTaskEdit('${task.id}')"
+                    class="flex-1 py-2 bg-teal-600 text-white rounded-xl text-xs font-bold active:scale-95">保存</button>
+            </div>
+        </div>`;
+    }
+
+    return `
+    <div class="bg-white rounded-xl p-3 shadow-sm border border-gray-100 mb-2 ${isDone ? 'opacity-60' : ''}">
+        <div class="flex items-start gap-2.5">
+            <input type="checkbox" ${isDone ? 'checked' : ''}
+                onchange="toggleComplete('${task.id}', '${dateStr}', this.checked)"
+                class="mt-0.5 w-5 h-5 rounded accent-teal-600 cursor-pointer shrink-0">
+            <div class="flex-1 min-w-0">
+                <button onclick="startEdit('${task.id}')"
+                    class="text-sm text-left w-full font-medium ${isDone ? 'line-through text-gray-400' : 'text-gray-800'} active:opacity-60"
+                    title="タップして名前を変更">
+                    ${escHtml(task.name)}${dueHtml}
+                </button>
+                ${rec ? `<p class="text-xs text-gray-400 mt-0.5">🔁 毎週 ${rec}</p>` : ''}
+            </div>
+        </div>
+    </div>`;
+}
+
+function groupByCat(tasks) {
+    const result = {};
+    CATEGORIES.forEach(c => {
+        const filtered = tasks.filter(t => t.category === c);
+        if (filtered.length) result[c] = filtered;
+    });
+    const uncat = tasks.filter(t => !CATEGORIES.includes(t.category));
+    if (uncat.length) result['その他'] = (result['その他'] || []).concat(uncat);
+    return result;
+}
+
+function toggleComplete(taskId, dateStr, checked) {
+    const data = loadData();
+    if (!data.completions[dateStr]) data.completions[dateStr] = [];
+    if (checked) {
+        if (!data.completions[dateStr].includes(taskId)) data.completions[dateStr].push(taskId);
+    } else {
+        data.completions[dateStr] = data.completions[dateStr].filter(id => id !== taskId);
+    }
+    saveData(data);
+    renderTaskList();
+}
+
+function startEdit(taskId) {
+    editingTaskId = taskId;
+    renderTaskList();
+    setTimeout(() => { const el = document.getElementById(`edit-input-${taskId}`); if (el) el.focus(); }, 50);
+}
+
+function cancelEdit() {
+    editingTaskId = null;
+    renderTaskList();
+}
+
+function saveTaskEdit(taskId) {
+    const input = document.getElementById(`edit-input-${taskId}`);
+    if (!input) return;
+    const name = input.value.trim();
+    if (!name) { showToast('タスク名を入力してください'); return; }
+    const data = loadData();
+    const task = data.tasks.find(t => t.id === taskId);
+    if (task) task.name = name;
+    saveData(data);
+    editingTaskId = null;
+    renderTaskList();
+    showToast('タスク名を更新しました');
+}
+
+// ===== カレンダー =====
+function renderCalendar() {
+    document.getElementById('cal-month-label').textContent = `${calYear}年 ${calMonth}月`;
+    renderCalHeader();
+    renderCalGrid();
+    renderCalDetail();
+}
+
+function renderCalHeader() {
+    const colors = ['text-gray-700','text-gray-700','text-gray-700','text-gray-700','text-gray-700','text-blue-500','text-red-500'];
+    document.getElementById('cal-header').innerHTML = WEEKDAYS.map((d, i) =>
+        `<div class="text-center text-xs font-bold py-1 ${colors[i]}">${d}</div>`
+    ).join('');
+}
+
+function renderCalGrid() {
+    const data = loadData();
+    const today = todayStr();
+    const taskMap = {};
+    data.tasks.forEach(t => { taskMap[t.id] = t; });
+
+    // 月の1日の曜日 (0=月...6=日)
+    const firstDayJS = new Date(calYear, calMonth - 1, 1).getDay();
+    const startOffset = (firstDayJS + 6) % 7;
+    const daysInMonth = new Date(calYear, calMonth, 0).getDate();
+
+    const cells = [];
+    for (let i = 0; i < startOffset; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+    while (cells.length % 7 !== 0) cells.push(null);
+
+    const weeks = [];
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i+7));
+
+    document.getElementById('cal-grid').innerHTML = weeks.map(week => {
+        const cols = week.map(day => {
+            if (day === null) return `<div></div>`;
+            const ds = `${calYear}-${String(calMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+            const isToday    = ds === today;
+            const isSelected = ds === calSelected;
+
+            const doneIds = new Set(data.completions[ds] || []);
+            const doneCount   = [...doneIds].filter(id => id in taskMap).length;
+            const schedUndone = data.tasks.filter(t =>
+                (t.recurrence||[]).length > 0 && isScheduledFor(t, ds) && !doneIds.has(t.id)
+            ).length;
+
+            const badges = [];
+            if (doneCount)   badges.push(`<span style="font-size:9px">✅${doneCount}</span>`);
+            if (schedUndone) badges.push(`<span style="font-size:9px">🔴${schedUndone}</span>`);
+            const dayLabel = isToday ? `<strong>${day}</strong>` : `${day}`;
+            const inner = dayLabel + (badges.length ? `<br>${badges.join('')}` : '');
+
+            const cls = ['cal-btn', isToday ? 'today' : '', isSelected ? 'selected' : ''].filter(Boolean).join(' ');
+            return `<button class="${cls}" onclick="selectCalDay('${ds}')">${inner}</button>`;
+        });
+        return `<div class="grid grid-cols-7 gap-1">${cols.join('')}</div>`;
+    }).join('');
+}
+
+function renderCalDetail() {
+    const data = loadData();
+    const d = new Date(calSelected + 'T00:00:00');
+    const wd = WEEKDAYS[(d.getDay() + 6) % 7];
+    const label = `${d.getMonth()+1}月${d.getDate()}日（${wd}）`;
+
+    const taskMap = {};
+    data.tasks.forEach(t => { taskMap[t.id] = t; });
+    const doneIds    = new Set(data.completions[calSelected] || []);
+    const doneNames  = [...doneIds].filter(id => id in taskMap).map(id => taskMap[id].name);
+    const undoneNames = data.tasks
+        .filter(t => (t.recurrence||[]).length > 0 && isScheduledFor(t, calSelected) && !doneIds.has(t.id))
+        .map(t => t.name);
+
+    let html = `<h3 class="font-bold text-gray-800 text-sm mb-3">📋 ${label} の詳細</h3>`;
+    if (!undoneNames.length && !doneNames.length) {
+        html += `<p class="text-sm text-gray-400">この日のタスクはありません。</p>`;
+    } else {
+        if (undoneNames.length) {
+            html += `<p class="text-xs font-bold text-red-500 mb-1.5">🔴 未達成</p>`;
+            html += undoneNames.map(n =>
+                `<div class="text-sm text-gray-700 py-1.5 border-b border-gray-50 last:border-0">○ ${escHtml(n)}</div>`
+            ).join('');
+        }
+        if (doneNames.length) {
+            html += `<p class="text-xs font-bold text-green-500 mb-1.5 ${undoneNames.length ? 'mt-3' : ''}">🟢 達成</p>`;
+            html += doneNames.map(n =>
+                `<div class="text-sm text-green-700 py-1.5 border-b border-gray-50 last:border-0">✅ ${escHtml(n)}</div>`
+            ).join('');
+        }
+    }
+    document.getElementById('cal-detail').innerHTML = html;
+}
+
+function selectCalDay(dateStr) {
+    calSelected = dateStr;
+    renderCalGrid();
+    renderCalDetail();
+}
+
+function calPrev() {
+    if (calMonth === 1) { calMonth = 12; calYear--; } else calMonth--;
+    renderCalendar();
+}
+
+function calNext() {
+    if (calMonth === 12) { calMonth = 1; calYear++; } else calMonth++;
+    renderCalendar();
+}
+
+// ===== ドロワー =====
+function openDrawer() {
+    buildWeekdayBtns();
+    refreshDeleteSelect();
+    document.getElementById('drawer').classList.add('open');
+    document.getElementById('drawer-overlay').classList.add('open');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeDrawer() {
+    document.getElementById('drawer').classList.remove('open');
+    document.getElementById('drawer-overlay').classList.remove('open');
+    document.body.style.overflow = '';
+}
+
+function toggleRecurMode() {
+    const checked = document.getElementById('inp-recur').checked;
+    document.getElementById('recur-section').classList.toggle('hidden', !checked);
+    document.getElementById('due-section').classList.toggle('hidden', checked);
+    if (!checked) { selectedWeekdays.clear(); buildWeekdayBtns(); }
+}
+
+function buildWeekdayBtns() {
+    document.getElementById('weekday-btns').innerHTML = WEEKDAYS.map((d, i) =>
+        `<button class="weekday-btn border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-semibold transition ${selectedWeekdays.has(i) ? 'selected' : 'bg-white text-gray-700'}"
+            onclick="toggleWeekday(${i}, this)">${d}</button>`
+    ).join('');
+}
+
+function toggleWeekday(idx, btn) {
+    if (selectedWeekdays.has(idx)) { selectedWeekdays.delete(idx); btn.classList.remove('selected'); btn.classList.add('bg-white','text-gray-700'); }
+    else { selectedWeekdays.add(idx); btn.classList.add('selected'); btn.classList.remove('bg-white','text-gray-700'); }
+}
+
+function refreshDeleteSelect() {
+    const data = loadData();
+    document.getElementById('del-select').innerHTML =
+        '<option value="">削除するタスクを選択</option>' +
+        data.tasks.map(t => `<option value="${t.id}">${escHtml(t.name)}</option>`).join('');
+}
+
+function addTask() {
+    const name    = document.getElementById('inp-name').value.trim();
+    const cat     = document.getElementById('inp-cat').value;
+    const isRecur = document.getElementById('inp-recur').checked;
+    const due     = document.getElementById('inp-due').value;
+
+    if (!name) { showToast('タスク名を入力してください'); return; }
+    if (isRecur && selectedWeekdays.size === 0) { showToast('曜日を1つ以上選んでください'); return; }
+
+    const task = {
+        id: String(Date.now()),
+        name,
+        category: cat,
+        due: (!isRecur && due) ? due : null,
+        recurrence: isRecur ? [...selectedWeekdays].sort() : [],
+        created: todayStr()
+    };
+
+    const data = loadData();
+    data.tasks.push(task);
+    saveData(data);
+
+    document.getElementById('inp-name').value = '';
+    document.getElementById('inp-due').value  = '';
+    document.getElementById('inp-recur').checked = false;
+    selectedWeekdays.clear();
+    toggleRecurMode();
+    refreshDeleteSelect();
+    showToast(`「${name}」を追加しました`);
+    if (currentTab === 'tasks') renderTaskList();
+    else renderCalendar();
+}
+
+function deleteTask() {
+    const id = document.getElementById('del-select').value;
+    if (!id) { showToast('削除するタスクを選択してください'); return; }
+    const data = loadData();
+    const task = data.tasks.find(t => t.id === id);
+    if (!task) return;
+    if (!confirm(`「${task.name}」を削除しますか？`)) return;
+
+    data.tasks = data.tasks.filter(t => t.id !== id);
+    for (const day in data.completions) {
+        data.completions[day] = data.completions[day].filter(tid => tid !== id);
+    }
+    saveData(data);
+    refreshDeleteSelect();
+    showToast(`「${task.name}」を削除しました`);
+    if (currentTab === 'tasks') renderTaskList();
+    else renderCalendar();
+}
+
+// ===== ユーティリティ =====
+function escHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function showToast(msg) {
+    const existing = document.querySelector('.toast');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = msg;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 2600);
+}
+
+// ===== 初期化 =====
+renderTaskList();
+</script>
+</body>
+</html>
